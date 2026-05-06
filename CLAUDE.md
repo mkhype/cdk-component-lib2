@@ -56,6 +56,8 @@ The ordering and separation of steps is load-bearing. Here is why each boundary 
 
 GitHub Actions `if:` conditions only work at the step boundary using `steps.<id>.outputs`. All subsequent steps use `if: steps.check.outputs.needed == 'true'` to skip cleanly when there are no releasable commits (e.g. a push containing only `chore:` or `docs:` commits). If the check were merged into the bump step, you'd need to gate the rest of the workflow on exit codes or file-based signals — less clear and harder to debug in the Actions UI.
 
+The check step uses `git log` to detect releasable commits rather than calling `conventional-recommended-bump` first. This is necessary because `conventional-recommended-bump` with the angular preset **always returns `patch`** even when there are zero releasable commits (`Reason: There are 0 BREAKING CHANGES and 0 features`). The git log check counts commits matching releasable types (`feat`, `fix`, `perf`, `revert`, or any `!` breaking change) since the last `release/v*` tracking tag. Only if releasable commits exist is `conventional-recommended-bump` invoked to determine the bump level (patch/minor/major).
+
 **"Bump version and update changelog" is separate from "Commit version bump to main"**
 
 `npm version` and `conventional-changelog` modify files in the working tree but do not commit. Keeping the mutation and the commit as distinct steps makes it easy to inspect what changed (each step's log shows its output cleanly) and allows inserting validation steps in between in future.
