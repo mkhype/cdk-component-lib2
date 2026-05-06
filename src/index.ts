@@ -3,5 +3,5 @@ export function hello(name: string): string {
 }
 
 export function greet(name: string, greeting = "Hi"): string {
-  return `${greeting}, ${name}!`;
+  return `${greeting}, ${name}2!`;
 }
