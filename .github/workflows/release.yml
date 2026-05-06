@@ -29,52 +29,29 @@ jobs:
       - name: Check if release is needed
         id: check
         run: |
-          # Find the most recent release tracking tag on main (release/v*).
-          # The user-facing v* tags point to detached dist commits that are NOT
-          # ancestors of main HEAD, so git describe cannot find them. The release/v*
-          # tracking tags sit on the version bump commits on main and are reachable.
-          LAST_TAG=$(git tag -l "release/v*" --sort=-version:refname | head -1)
-          LOG_RANGE="${LAST_TAG:+${LAST_TAG}..}HEAD"
-
-          # conventional-recommended-bump always returns "patch" even when there are
-          # no releasable commits ("Reason: 0 BREAKING CHANGES and 0 features").
-          # We must detect releasable commits ourselves via git log first.
-          RELEASABLE=$(git log $LOG_RANGE --format="%s" \
-            | grep -cE "^(feat|fix|perf|revert)(\([^)]+\))?!?:" || echo 0)
-          BREAKING=$(git log $LOG_RANGE --format="%B" \
-            | grep -cE "^BREAKING CHANGE:" || echo 0)
-          BREAKING_SUBJ=$(git log $LOG_RANGE --format="%s" \
-            | grep -cE "^[a-z]+(\([^)]+\))?!:" || echo 0)
-
-          if [[ $RELEASABLE -gt 0 || $BREAKING -gt 0 || $BREAKING_SUBJ -gt 0 ]]; then
-            BUMP=$(npx conventional-recommended-bump -p angular -t release/v)
-            echo "bump=${BUMP}" >> $GITHUB_OUTPUT
-            echo "needed=true" >> $GITHUB_OUTPUT
-          else
-            echo "needed=false" >> $GITHUB_OUTPUT
+          # scripts/next-version.mjs uses conventional-recommended-bump
+          # programmatically to determine if any releasable commits exist since
+          # the last release/v* tracking tag, and computes the next semver version.
+          # Outputs: {"needed":false} or {"needed":true,"bump":"minor","nextVersion":"0.4.0"}
+          RESULT=$(node scripts/next-version.mjs)
+          NEEDED=$(node -p "JSON.parse(process.argv[1]).needed" -- "$RESULT")
+          echo "needed=${NEEDED}" >> "$GITHUB_OUTPUT"
+          if [ "$NEEDED" = "true" ]; then
+            NEXT_VERSION=$(node -p "JSON.parse(process.argv[1]).nextVersion" -- "$RESULT")
+            echo "nextVersion=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Bump version and update changelog
+      - name: Release prep (bump, changelog, commit, tracking tag)
         if: steps.check.outputs.needed == 'true'
         run: |
-          BUMP="${{ steps.check.outputs.bump }}"
-          npm version $BUMP --no-git-tag-version
-          npx conventional-changelog -p angular -i CHANGELOG.md -s -t release/v
-
-      - name: Commit version bump to main and create tracking tag
-        if: steps.check.outputs.needed == 'true'
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json CHANGELOG.md
-          git commit -m "chore(release): v${VERSION} [skip ci]"
-          git push
-          # Lightweight tracking tag on this main commit. Required so that
-          # conventional-recommended-bump can find it on the next run: the
-          # user-facing v* tag points to the detached dist commit, which is not
-          # an ancestor of main HEAD and therefore invisible to git describe.
-          git tag "release/v${VERSION}"
+          # commit-and-tag-version handles: package.json bump, CHANGELOG.md update,
+          # release commit, and local release/v* tracking tag — all in one step.
+          # --release-as pins the exact version computed by scripts/next-version.mjs.
+          npx commit-and-tag-version --release-as "${{ steps.check.outputs.nextVersion }}"
+          VERSION=$(node -p "require('./package.json').version")
+          git push origin main
           git push origin "release/v${VERSION}"
 
       - name: Build
