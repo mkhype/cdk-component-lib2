@@ -1,3 +1,14 @@
+# Changelog
+
+All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
+
+## [0.4.0](https://github.com/mkhype/cdk-component-lib2/compare/release/v0.3.3...release/v0.4.0) (2026-05-06)
+
+
+### Features
+
+* **ci:** use commit-and-tag-version for release automation ([9a00ca9](https://github.com/mkhype/cdk-component-lib2/commit/9a00ca9d7f8d5058b53230f11f85d2b8ab13e89c))
+
 ## [0.3.3](https://github.com/mkhype/cdk-component-lib2/compare/release/v0.3.2...release/v0.3.3) (2026-05-06)
 
 
