@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for conventional-changelog
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Check if release is needed
+        id: check
+        run: |
+          BUMP=$(npx conventional-recommended-bump -p angular 2>/dev/null)
+          echo "bump=${BUMP}" >> $GITHUB_OUTPUT
+          if [[ -z "$BUMP" || "$BUMP" == "undefined" ]]; then
+            echo "needed=false" >> $GITHUB_OUTPUT
+          else
+            echo "needed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version and update changelog
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          BUMP="${{ steps.check.outputs.bump }}"
+          npm version $BUMP --no-git-tag-version
+          npx conventional-changelog -p angular -i CHANGELOG.md -s
+
+      - name: Commit version bump to main
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json CHANGELOG.md
+          git commit -m "chore(release): v${VERSION} [skip ci]"
+          git push
+
+      - name: Build
+        if: steps.check.outputs.needed == 'true'
+        run: npm run build
+
+      - name: Create release tag with dist (detached HEAD — dist stays off main)
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Detach HEAD at the version bump commit (current HEAD of main)
+          git checkout --detach HEAD
+
+          # Force-add dist (bypasses .gitignore)
+          git add -f dist/
+          git commit -m "chore: include dist for ${TAG} [skip ci]"
+
+          # Tag and push — this commit is not on any branch
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+
+      - name: Create GitHub Release with dist.zip
+        if: steps.check.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+
+          zip -r "dist-${TAG}.zip" dist/
+
+          # Extract this version's section from CHANGELOG.md for release notes
+          NOTES=$(awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
+
+          gh release create "${TAG}" "dist-${TAG}.zip" \
+            --title "${TAG}" \
+            --notes "${NOTES}"
