@@ -1,3 +1,9 @@
+## [0.3.1](https://github.com/mkhype/cdk-component-lib2/compare/release/v0.3.0...release/v0.3.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **ci:** add release/v* tracking tags to anchor commit range detection ([87722d3](https://github.com/mkhype/cdk-component-lib2/commit/87722d34820c42128ed7ed6d3d63a782b83d5e85))
 # 0.3.0 (2026-05-06)
 
 
