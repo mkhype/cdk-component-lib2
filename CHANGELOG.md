@@ -1,3 +1,10 @@
+# [0.5.0](https://github.com/mkhype/cdk-component-lib2/compare/v0.4.0...v0.5.0) (2026-05-06)
+
+
+### Features
+
+* test semantic-release pipeline ([fd1364f](https://github.com/mkhype/cdk-component-lib2/commit/fd1364fb4adb4ee48c3db457b9940679418062e7))
+
 # Changelog
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
