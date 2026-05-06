@@ -1,3 +1,9 @@
+## [0.3.3](https://github.com/mkhype/cdk-component-lib2/compare/release/v0.3.2...release/v0.3.3) (2026-05-06)
+
+
+### Bug Fixes
+
+* **ci:** detect releasable commits via git log instead of conventional-recommended-bump ([3c23d6a](https://github.com/mkhype/cdk-component-lib2/commit/3c23d6ae39386769d234ca1d1f44feb5119f193f))
 ## [0.3.2](https://github.com/mkhype/cdk-component-lib2/compare/release/v0.3.1...release/v0.3.2) (2026-05-06)
 ## [0.3.1](https://github.com/mkhype/cdk-component-lib2/compare/release/v0.3.0...release/v0.3.1) (2026-05-06)
 
