@@ -29,7 +29,10 @@ jobs:
       - name: Check if release is needed
         id: check
         run: |
-          BUMP=$(npx conventional-recommended-bump -p angular 2>/dev/null)
+          # -t release/v: look for lightweight tracking tags (release/v*) on main commits.
+          # These are distinct from the user-facing v* tags, which point to detached dist
+          # commits that are NOT ancestors of main HEAD and therefore invisible to git describe.
+          BUMP=$(npx conventional-recommended-bump -p angular -t release/v 2>/dev/null)
           echo "bump=${BUMP}" >> $GITHUB_OUTPUT
           if [[ -z "$BUMP" || "$BUMP" == "undefined" ]]; then
             echo "needed=false" >> $GITHUB_OUTPUT
@@ -42,9 +45,9 @@ jobs:
         run: |
           BUMP="${{ steps.check.outputs.bump }}"
           npm version $BUMP --no-git-tag-version
-          npx conventional-changelog -p angular -i CHANGELOG.md -s
+          npx conventional-changelog -p angular -i CHANGELOG.md -s -t release/v
 
-      - name: Commit version bump to main
+      - name: Commit version bump to main and create tracking tag
         if: steps.check.outputs.needed == 'true'
         run: |
           VERSION=$(node -p "require('./package.json').version")
@@ -53,6 +56,12 @@ jobs:
           git add package.json CHANGELOG.md
           git commit -m "chore(release): v${VERSION} [skip ci]"
           git push
+          # Lightweight tracking tag on this main commit. Required so that
+          # conventional-recommended-bump can find it on the next run: the
+          # user-facing v* tag points to the detached dist commit, which is not
+          # an ancestor of main HEAD and therefore invisible to git describe.
+          git tag "release/v${VERSION}"
+          git push origin "release/v${VERSION}"
 
       - name: Build
         if: steps.check.outputs.needed == 'true'
