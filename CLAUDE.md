@@ -13,120 +13,12 @@ npm run dev       # watch mode
 ## Project structure
 
 ```
-src/              # source files (TypeScript)
-dist/             # compiled output (gitignored on main; only exists in release tags)
+src/                            # source files (TypeScript)
+dist/                           # compiled output (gitignored on main; only in release tags)
+scripts/next-version.mjs        # version determination script (see Release pipeline)
+.versionrc.json                 # commit-and-tag-version config (tag prefix, commit message)
 .github/workflows/release.yml   # automated release pipeline
 ```
-
-## Release pipeline
-
-Every push to `main` triggers `.github/workflows/release.yml`, which:
-
-1. Runs tests
-2. Determines if a release is needed (conventional commits analysis, anchored to `release/v*` tracking tags)
-3. Bumps `package.json` version + generates `CHANGELOG.md`
-4. Commits those two files to `main` (no `dist/`) and pushes a lightweight tracking tag (`release/v{version}`) on that commit
-5. Builds `dist/`
-6. Creates a detached-HEAD commit with `dist/` force-added, tags it `v{version}`, pushes the tag
-7. Creates a GitHub Release with release notes + `dist-v{version}.zip` as an asset
-
-The result is this git shape:
-
-```
-main:  ... ──→ [chore(release): v1.1.0] ──→ (future commits)
-                        │  ↑
-                        │  └── lightweight tag: release/v1.1.0  (on main commit, for range detection)
-                        │
-                        └──→ [include dist for v1.1.0] ← annotated tag: v1.1.0  (for npm install)
-```
-
-The `v*` tag (with `dist/`) is only reachable via the tag — not via any branch. The `release/v*` tag sits on the main commit and is used internally for commit-range detection.
-
-### Why not semantic-release?
-
-semantic-release was considered and rejected. It always creates the git tag itself (on the main commit, without `dist/`). The only way to then move that tag to a dist-bearing commit is to force-push it, which is undesirable (cached SHAs on client side become stale). Using semantic-release's internal `tagFormat` to work around this adds a tracking tag for every release that pollutes the repo with no benefit.
-
-The conventional-changelog CLI tools (`conventional-recommended-bump` + `conventional-changelog`) are the lower-level primitives that semantic-release itself wraps. Using them directly gives full control over the git operations with no overhead.
-
-### Why are the workflow steps split up the way they are?
-
-The ordering and separation of steps is load-bearing. Here is why each boundary exists:
-
-**"Check if release is needed" is a separate step (not merged into the bump step)**
-
-GitHub Actions `if:` conditions only work at the step boundary using `steps.<id>.outputs`. All subsequent steps use `if: steps.check.outputs.needed == 'true'` to skip cleanly when there are no releasable commits (e.g. a push containing only `chore:` or `docs:` commits). If the check were merged into the bump step, you'd need to gate the rest of the workflow on exit codes or file-based signals — less clear and harder to debug in the Actions UI.
-
-The check step uses `git log` to detect releasable commits rather than calling `conventional-recommended-bump` first. This is necessary because `conventional-recommended-bump` with the angular preset **always returns `patch`** even when there are zero releasable commits (`Reason: There are 0 BREAKING CHANGES and 0 features`). The git log check counts commits matching releasable types (`feat`, `fix`, `perf`, `revert`, or any `!` breaking change) since the last `release/v*` tracking tag. Only if releasable commits exist is `conventional-recommended-bump` invoked to determine the bump level (patch/minor/major).
-
-**"Bump version and update changelog" is separate from "Commit version bump to main"**
-
-`npm version` and `conventional-changelog` modify files in the working tree but do not commit. Keeping the mutation and the commit as distinct steps makes it easy to inspect what changed (each step's log shows its output cleanly) and allows inserting validation steps in between in future.
-
-**"Commit version bump to main" pushes a tracking tag in the same step**
-
-The tracking tag (`release/v{VERSION}`) is a lightweight tag created on the version bump commit immediately after it is pushed. It must be in the same step as the commit/push because:
-- It references the SHA that was just pushed — this is not known until the commit exists.
-- If the tagging were a separate step and the workflow failed between them, the next run would find no tracking tag, scan all history, and generate a spurious bump. Keeping them together is the atomic unit of "a release has been anchored".
-
-**"Commit version bump to main" happens before "Build"**
-
-The version bump commit must land on `main` before the build and tag steps. This ensures:
-- The `package.json` version that gets embedded in the dist matches the git tag.
-- The detached-HEAD commit (the tag commit) has the version bump commit as its parent, making the tag a clear fork off the correct point in history.
-- If the build or tagging step fails after this push, the next run will find the `release/v*` tracking tag, see no releasable commits since then, and exit early. No double-bump. No manual recovery needed.
-
-**"Build" is separate from "Create release tag with dist"**
-
-Separation of concerns: `npm run build` produces the artefact; the tag step consumes it. If the build command changes (e.g. adding a bundle step), the tag step is unaffected. It also makes build failures attributable in the Actions UI.
-
-**"Create release tag with dist" uses a detached HEAD, not a branch**
-
-This is the core constraint: `dist/` must not land on `main`. The detached-HEAD technique achieves this cleanly:
-
-```bash
-git checkout --detach HEAD   # detach at the version bump commit
-git add -f dist/             # force-add (bypasses .gitignore)
-git commit -m "..."          # new commit, parent = version bump commit
-git tag -a "v1.1.0" HEAD     # tag points here
-git push origin v1.1.0       # push only the tag, no branch
-```
-
-No branch is created or pushed. The commit with `dist/` is only reachable via the tag. `git branch --contains v1.1.0` returns empty.
-
-**"Create GitHub Release" is last**
-
-`gh release create` requires the tag to already exist in the remote. It must come after the tag push. Release notes are extracted from `CHANGELOG.md` (which was already committed to main by this point).
-
-### Why are there two kinds of tags per release?
-
-| Tag | Example | Commit it points to | Purpose |
-|---|---|---|---|
-| `release/v*` | `release/v1.1.0` | Version bump commit on `main` | Anchor for `conventional-recommended-bump` range detection |
-| `v*` | `v1.1.0` | Detached dist commit (off main) | What clients install via `npm install github:…#v1.1.0` |
-
-The `v*` tag must point to a commit that contains `dist/`. That commit is not on `main`. Because it is not an ancestor of `main` HEAD, `git describe --tags HEAD` cannot find it. Without the `release/v*` tracking tag on the main commit, `conventional-recommended-bump` would find no previous release, scan all of history, and emit a spurious bump on every push (this bug was observed in practice before the tracking tag was introduced).
-
-The tracking tags are lightweight (just a ref pointer, no extra git object), clearly namespaced, and invisible to clients who only ever reference `v*` tags.
-
-### Why does the check step use `-t release/v`?
-
-`conventional-recommended-bump -t release/v` and `conventional-changelog -t release/v` tell both tools to look for tags with the prefix `release/v` when determining the commit range. Without this flag, they default to looking for `v*` tags — which, as explained above, point to detached commits not reachable from `main` HEAD.
-
-### Could the workflow be simplified?
-
-Yes, with trade-offs:
-
-| Simplification | Trade-off |
-|---|---|
-| Commit `dist/` to `main` (remove detached-HEAD step, eliminate tracking tags) | `dist/` pollutes the main branch history; every release doubles the commit count |
-| Use `semantic-release` | Opaque tooling; requires force-pushing the tag or accepting a tracking tag anyway |
-| Skip `CHANGELOG.md` and use GitHub's auto-generated release notes | Loses the local changelog file; release notes only exist on GitHub |
-| Merge "check" + "bump" + "commit" into one step | Less readable CI output; harder to add steps between stages later |
-| Skip the zip asset and only rely on `npm install github:…#tag` | Loses a convenient download for non-npm consumers |
-
-### Why is `dist/` in `.gitignore` if it gets committed to tags?
-
-`.gitignore` applies to the working tree and index — it prevents `git add .` from accidentally staging the build artefact during development. The release workflow uses `git add -f dist/` (force) to bypass this explicitly and intentionally. This is the standard pattern for keeping generated files out of normal development commits while still being able to include them in specific contexts (release tags, in this case).
 
 ## Commit convention
 
@@ -139,26 +31,91 @@ Commits to `main` must follow [Conventional Commits](https://www.conventionalcom
 | `feat!:` or body contains `BREAKING CHANGE:` | major | `feat!: rename hello to greet` |
 | `chore:`, `docs:`, `refactor:`, `test:`, `ci:` | none | `chore: update deps` |
 
-Commits that produce no version bump (chore, docs, etc.) cause the workflow to exit early after the test step — no version bump, no tag, no release.
+Non-releasable commits cause the workflow to exit early after tests — no version bump, no tag, no release.
+
+## Release pipeline
+
+Every push to `main` triggers `.github/workflows/release.yml`, which:
+
+1. Runs tests
+2. **Check** (`scripts/next-version.mjs`): determines if releasable commits exist since the last `release/v*` tag and computes the next version. Outputs JSON: `{"needed":false}` or `{"needed":true,"bump":"minor","nextVersion":"0.4.0"}`.
+3. **Release prep** (`commit-and-tag-version --release-as <nextVersion>`): bumps `package.json`, updates `CHANGELOG.md`, creates the release commit and `release/v{version}` tracking tag. Pushes both to main.
+4. Builds `dist/`
+5. Creates a detached-HEAD commit with `dist/` force-added, tags it `v{version}`, pushes the tag
+6. Creates a GitHub Release with release notes + `dist-v{version}.zip` as an asset
+
+The result is this git shape:
+
+```
+main:  ... ──→ [chore(release): release/v1.1.0] ──→ (future commits)
+                        │  ↑
+                        │  └── lightweight tag: release/v1.1.0  (on main commit, for range detection)
+                        │
+                        └──→ [include dist for v1.1.0] ← annotated tag: v1.1.0  (for npm install)
+```
+
+### Two tags per release
+
+| Tag | Example | Points to | Purpose |
+|---|---|---|---|
+| `release/v*` | `release/v1.1.0` | Version bump commit on `main` | Commit-range anchor for version detection |
+| `v*` | `v1.1.0` | Detached dist commit (off main) | What clients install via `npm install github:…#v1.1.0` |
+
+The `v*` tag must point to a commit containing `dist/`, which is not on `main`. Because it is not an ancestor of `main` HEAD, the version detection tooling cannot find it from HEAD. The `release/v*` tracking tag sits on the main commit and is used instead. Without it, the tooling would scan all history and emit a spurious bump on every push.
+
+### Why `dist/` is not on main
+
+`dist/` is in `.gitignore` so `git add .` never accidentally stages build output. The release workflow uses `git add -f dist/` to bypass this intentionally. The dist commit is created on a detached HEAD (no branch) so it is only reachable via the `v*` tag.
+
+### Step ordering rationale
+
+- **Check is a separate step**: GitHub Actions `if:` conditions gate on step outputs. All subsequent steps use `if: steps.check.outputs.needed == 'true'`. Merging check into release prep would require exit-code gymnastics instead.
+- **Release prep pushes before build**: The version bump commit must be on `main` before the dist tag is created, so the dist commit's parent is the correct release commit. If build or tagging fails after this push, the next run finds the `release/v*` tag, sees no new releasable commits, and exits cleanly — no double-bump.
+- **Build is separate from the dist tag step**: makes build failures clearly attributable in the Actions UI.
+- **GitHub Release is last**: `gh release create` requires the tag to already exist on the remote.
+
+### `scripts/next-version.mjs`
+
+Standalone ESM script. Uses `conventional-recommended-bump`'s `Bumper` API and `ConventionalGitClient` programmatically — same library the CLI wraps, but with full control.
+
+Key behaviour:
+- `conventional-recommended-bump` with the angular preset always returns `patch` even for zero releasable commits. The script explicitly checks for releasable types (`feat`, `fix`, `perf`, `revert`, breaking changes) before invoking `whatBump`.
+- The angular parser's header regex does not handle the `type(scope)!:` shorthand. The script detects these via `commit.header` and synthesizes the missing `BREAKING CHANGE` note before passing commits to `whatBump`, so `feat!:` correctly produces a major bump.
+- Uses `getLastSemverTag({ prefix: 'release/v' })` to anchor the commit range (not `v*` tags, which point to off-branch dist commits).
+
+Run locally to inspect: `node scripts/next-version.mjs`
+
+### `.versionrc.json`
+
+Configures `commit-and-tag-version`:
+- `tagPrefix: "release/v"` — creates `release/v{version}` tracking tags and scans for them when detecting the last release.
+- `releaseCommitMessageFormat` — appends `[skip ci]` so the release commit does not re-trigger the workflow.
+
+### Retroactive tracking tags
+
+If you need to bootstrap `release/v*` tags (e.g. after cloning fresh or recovering from broken state), tag each release commit on main:
+
+```bash
+git tag "release/v{VERSION}" {SHA}
+git push origin "release/v{VERSION}"
+```
 
 ## Client installation
 
 ```bash
-# Install a specific tagged version (no npm registry required)
 npm install github:mkhype/cdk-component-lib2#v1.0.0
+```
 
-# Or pin in package.json
+```json
 "dependencies": {
   "cdk-component-lib2": "github:mkhype/cdk-component-lib2#v1.0.0"
 }
 ```
 
-Because `dist/` is committed into every release tag, no build step is required on the client side. TypeScript type definitions (`dist/index.d.ts`) are included.
+`dist/` is included in every release tag — no build step needed on the client. TypeScript types (`dist/index.d.ts`) are included.
 
 ## Key implementation notes
 
-- **`conventional-changelog-cli` package → binary is `conventional-changelog`** (not `conventional-changelog-cli`). The package name and the bin name differ. The workflow uses `npx conventional-changelog`.
-- **`conventional-recommended-bump` v10 is ESM-only** — it cannot be `require()`d from CommonJS. It is only used via the CLI (`npx conventional-recommended-bump`), which works fine regardless of module format.
-- **`ts-node` is required** even though it is not directly referenced: `jest.config.ts` is a TypeScript file, and Jest uses `ts-node` internally to parse TypeScript configuration files. Without it, `npm test` fails with `'ts-node' is required for the TypeScript configuration files`.
-- **`tsconfig.json` excludes `src/**/*.test.ts`** so that `npm run build` does not emit compiled test files into `dist/`. Always clean the `dist/` directory before building (`rm -rf dist/ && npm run build`) to guarantee a clean output — `tsc` does not delete stale files.
-- **Retroactive tracking tags**: if you ever need to bootstrap the `release/v*` tracking tags for existing releases (e.g. after cloning a fresh copy or recovering from a broken state), tag each `chore(release):` commit on main: `git tag "release/v{VERSION}" {SHA} && git push origin "release/v{VERSION}"`.
+- **`conventional-recommended-bump` v10 is ESM-only** — `scripts/next-version.mjs` is `.mjs` for this reason. It imports `Bumper` from `conventional-recommended-bump`, `ConventionalGitClient` from `@conventional-changelog/git-client`, and `createPreset` from `conventional-changelog-angular` — all transitive deps available after `npm ci`.
+- **`ts-node` is required** even though not directly referenced: `jest.config.ts` is TypeScript, and Jest uses `ts-node` to parse it. Without it, `npm test` fails with `'ts-node' is required for the TypeScript configuration files`.
+- **`tsconfig.json` excludes `src/**/*.test.ts`** so test files are not emitted into `dist/`. Always clean before building: `rm -rf dist/ && npm run build` — `tsc` does not delete stale files.
