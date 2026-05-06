@@ -6,6 +6,6 @@ function hello(name) {
     return `Hello, ${name}!`;
 }
 function greet(name, greeting = "Hi") {
-    return `${greeting}, ${name}!`;
+    return `${greeting}, ${name}2!`;
 }
 //# sourceMappingURL=index.js.map

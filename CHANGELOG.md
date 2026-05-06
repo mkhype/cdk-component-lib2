@@ -1,3 +1,10 @@
+# [0.6.0](https://github.com/mkhype/cdk-component-lib2/compare/v0.5.0...v0.6.0) (2026-05-06)
+
+
+### Features
+
+* new greeting ([14f2546](https://github.com/mkhype/cdk-component-lib2/commit/14f254696f326b1d40f107112ba93ca5fc40de07))
+
 # [0.5.0](https://github.com/mkhype/cdk-component-lib2/compare/v0.4.0...v0.5.0) (2026-05-06)
 
 
