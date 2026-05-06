@@ -1,3 +1,4 @@
+## [0.3.2](https://github.com/mkhype/cdk-component-lib2/compare/release/v0.3.1...release/v0.3.2) (2026-05-06)
 ## [0.3.1](https://github.com/mkhype/cdk-component-lib2/compare/release/v0.3.0...release/v0.3.1) (2026-05-06)
 
 
