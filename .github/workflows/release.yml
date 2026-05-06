@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # full history needed for conventional-changelog
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -26,71 +26,7 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Check if release is needed
-        id: check
-        run: |
-          # scripts/next-version.mjs uses conventional-recommended-bump
-          # programmatically to determine if any releasable commits exist since
-          # the last release/v* tracking tag, and computes the next semver version.
-          # Outputs: {"needed":false} or {"needed":true,"bump":"minor","nextVersion":"0.4.0"}
-          RESULT=$(node scripts/next-version.mjs)
-          NEEDED=$(node -p "JSON.parse(process.argv[1]).needed" -- "$RESULT")
-          echo "needed=${NEEDED}" >> "$GITHUB_OUTPUT"
-          if [ "$NEEDED" = "true" ]; then
-            NEXT_VERSION=$(node -p "JSON.parse(process.argv[1]).nextVersion" -- "$RESULT")
-            echo "nextVersion=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Release prep (bump, changelog, commit, tracking tag)
-        if: steps.check.outputs.needed == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          # commit-and-tag-version handles: package.json bump, CHANGELOG.md update,
-          # release commit, and local release/v* tracking tag — all in one step.
-          # --release-as pins the exact version computed by scripts/next-version.mjs.
-          npx commit-and-tag-version --release-as "${{ steps.check.outputs.nextVersion }}"
-          VERSION=$(node -p "require('./package.json').version")
-          git push origin main
-          git push origin "release/v${VERSION}"
-
-      - name: Build
-        if: steps.check.outputs.needed == 'true'
-        run: npm run build
-
-      - name: Create release tag with dist (detached HEAD — dist stays off main)
-        if: steps.check.outputs.needed == 'true'
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="v${VERSION}"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Detach HEAD at the version bump commit (current HEAD of main)
-          git checkout --detach HEAD
-
-          # Force-add dist (bypasses .gitignore)
-          git add -f dist/
-          git commit -m "chore: include dist for ${TAG} [skip ci]"
-
-          # Tag and push — this commit is not on any branch
-          git tag -a "${TAG}" -m "Release ${TAG}"
-          git push origin "${TAG}"
-
-      - name: Create GitHub Release with dist.zip
-        if: steps.check.outputs.needed == 'true'
+      - name: Release
+        run: npx semantic-release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="v${VERSION}"
-
-          zip -r "dist-${TAG}.zip" dist/
-
-          # Extract this version's section from CHANGELOG.md for release notes
-          NOTES=$(awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
-
-          gh release create "${TAG}" "dist-${TAG}.zip" \
-            --title "${TAG}" \
-            --notes "${NOTES}"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

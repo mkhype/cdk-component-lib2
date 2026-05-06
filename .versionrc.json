@@ -1,4 +1,0 @@
-{
-  "tagPrefix": "release/v",
-  "releaseCommitMessageFormat": "chore(release): {{currentTag}} [skip ci]"
-}
